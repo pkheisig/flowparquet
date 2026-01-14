@@ -1,0 +1,1 @@
+pyinstaller --noconfirm --onedir --windowed --name "FlowParquet" --add-data "converter.py:." --hidden-import "pandas" --hidden-import "pyarrow" --hidden-import "flowio" --hidden-import "tkinterdnd2" --collect-all "customtkinter" --collect-all "tkinterdnd2" main.py
