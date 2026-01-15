@@ -7,7 +7,7 @@ class DataConverter:
     @staticmethod
     def convert_to_parquet(file_path, output_path, options=None):
         """
-        Converts a single file (FCS or CSV) to Parquet.
+        Converts a single file (FCS, CSV, TSV) to Parquet.
         
         Args:
             file_path (str): Path to input file.
@@ -20,25 +20,11 @@ class DataConverter:
         if options is None:
             options = {}
 
-        ext = os.path.splitext(file_path)[1].lower()
-        
+        df, error = DataConverter._read_file_to_df(file_path, options)
+        if error:
+            return False, error
+
         try:
-            if ext == '.fcs':
-                df = DataConverter._read_fcs(file_path, options)
-            elif ext == '.csv':
-                df = pd.read_csv(file_path)
-            elif ext in ['.xls', '.xlsx']:
-                df = pd.read_excel(file_path)
-            else:
-                raise ValueError(f"Unsupported file format: {ext}")
-
-            # Add filename column if requested
-            if options.get('add_filename_col', False):
-                # Use filename without extension as the sample ID
-                sample_id = os.path.splitext(os.path.basename(file_path))[0]
-                # Insert at the beginning
-                df.insert(0, 'SampleID', sample_id)
-
             # Write to parquet
             compression = options.get('compression', 'snappy')
             df.to_parquet(output_path, index=False, compression=compression)
@@ -46,6 +32,57 @@ class DataConverter:
 
         except Exception as e:
             return False, str(e)
+
+    @staticmethod
+    def combine_to_parquet(file_paths, output_path, options=None):
+        """
+        Combines multiple files into a single Parquet file.
+        """
+        if options is None:
+            options = {}
+        
+        dfs = []
+        for fp in file_paths:
+            df, error = DataConverter._read_file_to_df(fp, options)
+            if error:
+                return False, f"Error reading {os.path.basename(fp)}: {error}"
+            dfs.append(df)
+            
+        if not dfs:
+            return False, "No data found."
+            
+        try:
+            combined_df = pd.concat(dfs, ignore_index=True)
+            compression = options.get('compression', 'snappy')
+            combined_df.to_parquet(output_path, index=False, compression=compression)
+            return True, f"Successfully combined {len(file_paths)} files to {os.path.basename(output_path)}"
+        except Exception as e:
+            return False, str(e)
+
+    @staticmethod
+    def _read_file_to_df(file_path, options):
+        ext = os.path.splitext(file_path)[1].lower()
+        try:
+            if ext == '.fcs':
+                df = DataConverter._read_fcs(file_path, options)
+            elif ext == '.csv':
+                df = pd.read_csv(file_path)
+            elif ext == '.tsv':
+                df = pd.read_csv(file_path, sep='\t')
+            elif ext in ['.xls', '.xlsx']:
+                df = pd.read_excel(file_path)
+            else:
+                return None, f"Unsupported file format: {ext}"
+
+            # Add filename column if requested
+            if options.get('add_filename_col', False):
+                sample_id = os.path.splitext(os.path.basename(file_path))[0]
+                df.insert(0, 'SampleID', sample_id)
+            
+            return df, None
+        except Exception as e:
+            return None, str(e)
+
 
     @staticmethod
     def _read_fcs(file_path, options):

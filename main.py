@@ -71,6 +71,10 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.var_filename = ctk.BooleanVar(value=True)
         chk_filename = ctk.CTkCheckBox(self.options_frame, text="Add SampleID Col", variable=self.var_filename)
         chk_filename.pack(side="left", padx=15, pady=10)
+
+        self.var_merge = ctk.BooleanVar(value=False)
+        chk_merge = ctk.CTkCheckBox(self.options_frame, text="Merge to Single File", variable=self.var_merge)
+        chk_merge.pack(side="left", padx=15, pady=10)
         
         # Compression (Right aligned)
         self.comp_frame = ctk.CTkFrame(self.options_frame, fg_color="transparent")
@@ -101,7 +105,7 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.btn_convert.grid(row=0, column=2, padx=15, pady=15, sticky="e")
 
     def browse_files(self):
-        filetypes = [("Flow/Data Files", "*.fcs *.csv *.xls *.xlsx"), ("All Files", "*.*")]
+        filetypes = [("Flow/Data Files", "*.fcs *.csv *.tsv *.xls *.xlsx"), ("All Files", "*.*")]
         files = filedialog.askopenfilenames(filetypes=filetypes)
         if files:
             self.add_files(files)
@@ -112,7 +116,7 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
             found = []
             for root, _, filenames in os.walk(folder):
                 for name in filenames:
-                    if name.lower().endswith(('.fcs', '.csv', '.xls', '.xlsx')):
+                    if name.lower().endswith(('.fcs', '.csv', '.tsv', '.xls', '.xlsx')):
                         found.append(os.path.join(root, name))
             self.add_files(found)
 
@@ -120,12 +124,12 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
         raw_files = self.tk.splitlist(event.data)
         valid = []
         for f in raw_files:
-            if os.path.isfile(f) and f.lower().endswith(('.fcs', '.csv', '.xls', '.xlsx')):
+            if os.path.isfile(f) and f.lower().endswith(('.fcs', '.csv', '.tsv', '.xls', '.xlsx')):
                 valid.append(f)
             elif os.path.isdir(f):
                 for root, _, filenames in os.walk(f):
                     for name in filenames:
-                        if name.lower().endswith(('.fcs', '.csv', '.xls', '.xlsx')):
+                        if name.lower().endswith(('.fcs', '.csv', '.tsv', '.xls', '.xlsx')):
                             valid.append(os.path.join(root, name))
         self.add_files(valid)
 
@@ -167,10 +171,6 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if self.is_converting:
             return
 
-        self.is_converting = True
-        self.btn_convert.configure(state="disabled", text="Processing...")
-        self.progress.set(0)
-        
         # Map UI compression to backend values
         comp_ui = self.var_compression_ui.get()
         comp_val = "snappy"
@@ -182,10 +182,47 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
             'add_filename_col': self.var_filename.get(),
             'compression': comp_val
         }
+
+        # Check for Merge Mode
+        if self.var_merge.get():
+            output_file = filedialog.asksaveasfilename(
+                defaultextension=".parquet",
+                filetypes=[("Parquet File", "*.parquet")],
+                title="Save Combined Parquet File As"
+            )
+            if not output_file:
+                return # User cancelled
+
+            self.is_converting = True
+            self.btn_convert.configure(state="disabled", text="Merging...")
+            self.progress.set(0)
+            
+            thread = threading.Thread(target=self.run_merge_thread, args=(output_file, options))
+            thread.start()
+        else:
+            self.is_converting = True
+            self.btn_convert.configure(state="disabled", text="Processing...")
+            self.progress.set(0)
+            
+            thread = threading.Thread(target=self.run_conversion_thread, args=(options,))
+            thread.start()
+
+    def run_merge_thread(self, output_file, options):
+        self.progress.set(0.5) # Indeterminate state mainly
+        self.lbl_status.configure(text=f"Merging {len(self.files)} files...")
         
-        # Run in thread
-        thread = threading.Thread(target=self.run_conversion_thread, args=(options,))
-        thread.start()
+        ok, msg = DataConverter.combine_to_parquet(self.files, output_file, options)
+        
+        self.progress.set(1.0)
+        self.is_converting = False
+        self.btn_convert.configure(state="normal", text="Convert")
+        
+        if ok:
+            self.lbl_status.configure(text="Merge Complete.")
+            messagebox.showinfo("Success", msg)
+        else:
+            self.lbl_status.configure(text="Merge Failed.")
+            messagebox.showerror("Error", msg)
 
     def run_conversion_thread(self, options):
         total = len(self.files)
@@ -218,6 +255,7 @@ class FlowParquetApp(ctk.CTk, TkinterDnD.DnDWrapper):
             messagebox.showerror("Conversion Errors", f"Some files failed:\n{err_msg}")
         else:
             messagebox.showinfo("Complete", f"Successfully converted {success} files.")
+
 
 if __name__ == "__main__":
     app = FlowParquetApp()
